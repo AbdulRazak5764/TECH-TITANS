@@ -1,0 +1,308 @@
+{
+  "name": "Smart Recruitment Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Smart Recruitment Assistant",
+        "formDescription": "Upload a job description and candidate resumes to automatically shortlist top candidates using AI analysis. The assistant will match resumes against the job description and send personalized reports to your email.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Job Title :",
+              "placeholder": "Enter the Job Title :ex:Backend Devloper",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Job Description :",
+              "fieldType": "textarea",
+              "placeholder": "Enter the Job Description:"
+            },
+            {
+              "fieldLabel": "Recruiter Email:",
+              "fieldType": "email",
+              "placeholder": "Enter the Recruiter Email :"
+            },
+            {
+              "fieldLabel": "Candidate Resume :",
+              "fieldType": "file",
+              "multipleFiles": "={{ true }}",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        -496,
+        -124
+      ],
+      "id": "68607c86-ead4-4947-aeb2-43bb39389ab4",
+      "name": "On form submission",
+      "webhookId": "eacb787f-9385-4739-a095-b750306c6ef0"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {
+          "keepSource": "json"
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        -124
+      ],
+      "id": "82bb5d11-a45b-4c0c-8521-362f9bbb0ba1",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=AI Prompt for Resume-Job Match Analysis (Minimal Output)\n\nRole: AI Recruitment Assistant\n\nGoal: Analyze a candidate’s resume against a job description and provide a concise structured JSON containing only candidate name, email, match score, and reasoning.\n\nInputs:\n\nresumeText: {{ $json[\"text\"] }}\n\njobDescription:{{ $('On form submission').item.json['Job Description :'] }}\n\nInstructions:\n\nExtract candidate information from the resume:\n\ncandidateName → full name of the candidate\n\ncandidateEmail → email address\n\nAnalyze the resume against the job description based on:\n\nSkills match\n\nExperience relevance\n\nEducation fit\n\nOverall suitability\n\nProvide a match score from 1 to 10 (decimals allowed).\n\nInclude concise reasoning explaining the score.\n\nEnsure deterministic scoring: same resume + job description → same score.\n\nRespond strictly in valid JSON format with only the required fields:\n\n{\n  \"candidateName\": \"<extracted from resume>\",\n  \"candidateEmail\": \"<extracted from resume>\",\n  \"score\": <number between 1 and 10>,\n  \"reasoning\": \"<concise explanation of the match>\"\n}\n\n\nExample Output:\n\n{\n  \"candidateName\": \"Kiran Devi\",\n  \"candidateEmail\": \"kiran.devi@example.com\",\n  \"score\": 9.0,\n  \"reasoning\": \"The candidate has strong full-stack development experience with React and Node.js, closely matching the job requirements. Cloud experience is partially mentioned.\"\n}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        176,
+        -124
+      ],
+      "id": "68598c41-3728-4a6f-932b-7329b8963bd2",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        184,
+        100
+      ],
+      "id": "4ae2442e-3938-43d8-8652-e1bd7ef69578",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "2C9kuaZXKXbyAn4C",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Extract from File').item.json.text }}",
+        "contextWindowLength": 2000
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        312,
+        100
+      ],
+      "id": "4fc918dd-1074-41ad-a929-39ba6e86486a",
+      "name": "Simple Memory1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item; // If binary data exists directly \nconst binaries = item.binary ? Object.keys(item.binary) : []; // If no binary data found, stop with error \nif (binaries.length === 0) { throw new Error(\"No binary files found in input. Check previous node output.\"); } // Create an array for each file \nreturn binaries.map(key => ({ binary: { data: item.binary[key], }, json: { fileName: key, }, }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        -124
+      ],
+      "id": "a6ac2e7d-1bcc-433d-bbf1-94194c80f7b9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ✅ Number of top candidates to select\nconst TOP_N = 2;\n\n// Get all input items\nconst items = $input.all();\nif (!items || items.length === 0) return [];\n\n// First, enrich each item by extracting candidateEmail from output string\nconst enrichedItems = items.map(item => {\n  const rawOutput = item.json.output;\n\n  let candidateEmail = null;\n\n  if (rawOutput) {\n    try {\n      // Remove ```json and ``` wrappers\n      const cleanedOutput = rawOutput\n        .replace(/^```json/, '')\n        .replace(/```$/, '')\n        .trim();\n\n      const parsed = JSON.parse(cleanedOutput);\n      candidateEmail = parsed.candidateEmail || null;\n    } catch (e) {\n      candidateEmail = null;\n    }\n  }\n\n  return {\n    ...item,\n    json: {\n      ...item.json,\n      candidateEmail\n    }\n  };\n});\n\n// Then normalize the match_score for sorting\nconst normalized = enrichedItems.map(item => {\n  let score = item.json?.match_score;\n\n  // Convert to numeric value even if it's a string like \"85%\" or \"90/100\"\n  if (typeof score === 'string') {\n    score = parseFloat(score.replace(/[^\\d.-]+/g, '')) || 0;\n  } else if (typeof score !== 'number') {\n    score = 0;\n  }\n\n  return {\n    ...item,\n    json: {\n      ...item.json,\n      _score: score, // temp numeric score\n    },\n  };\n});\n\n// ✅ Sort in descending order by score\nnormalized.sort((a, b) => b.json._score - a.json._score);\n\n// ✅ Take top N scores (including ties)\nlet topScoreItems = [];\nlet count = 0;\nlet lastScore = null;\n\nfor (const item of normalized) {\n  if (count < TOP_N || item.json._score === lastScore) {\n    topScoreItems.push(item);\n    lastScore = item.json._score;\n    count++;\n  } else {\n    break;\n  }\n}\n\n// Remove temporary _score field\ntopScoreItems.forEach(item => delete item.json._score);\n\n// ✅ Return enriched top items with candidateEmail extracted and preserved\nreturn topScoreItems;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        24
+      ],
+      "id": "5a2a86da-9b11-42b3-9c63-6e1c6a2116d0",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=write the email to send the you are shorteslied for the next round  the  to the email, output {{ $json.output }}\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        -48
+      ],
+      "id": "61495d86-036b-4039-be26-570eca386ff4",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        824,
+        248
+      ],
+      "id": "b37ae5b8-7581-442a-a868-53f52007803e",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "2C9kuaZXKXbyAn4C",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code in JavaScript1').item.json.candidateEmail }}",
+        "subject": "shortlisted for next round ",
+        "emailType": "text",
+        "message": "={{ $json.output }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1312,
+        -96
+      ],
+      "id": "2ee5cc40-6359-4259-9fb0-d597cb6b60d5",
+      "name": "Send a message",
+      "webhookId": "49448134-42da-44aa-a6e7-657431de7b0f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "zfJlXgyfpjUnWxrK",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "948fdb0a-7a7c-4837-8e16-43bb15744624",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03cbd9cb52c0bb16c35324d070f9e531c7101a5f9c07c343a4f7bd5e75ae6597"
+  },
+  "id": "tv2qlkotS1UZqPGS",
+  "tags": []
+}
